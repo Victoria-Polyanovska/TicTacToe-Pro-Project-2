@@ -24,7 +24,7 @@ namespace TicTacToe.UI
         private readonly ILogger _logger = new FileLogger();
         private readonly TournamentManager _tournamentManager = new TournamentManager();
         private readonly CommandHistory _history = new CommandHistory();
-
+        private readonly Dictionary<(int Row, int Col), Button> _boardButtons = new();
         public Form1(string playerName)
         {
             InitializeComponent();
@@ -66,12 +66,11 @@ namespace TicTacToe.UI
             }
         }
 
-        private bool HandleMove(Button button)
-        {
-            int row = int.Parse(button.Name.Substring(3, 1));
-            int col = int.Parse(button.Name.Substring(4, 1));
+       private bool HandleMove(Button button)
+{
+    if (button.Tag is not (int row, int col)) return false;
 
-            if (_gameEngine.MakeMove(row, col, _currentPlayer.Symbol))
+    if (_gameEngine.MakeMove(row, col, _currentPlayer.Symbol))
             {
                 _history.PushMove(_gameEngine.GetBoard(), row, col, _currentPlayer.Symbol);
                 AnalyticsService.Instance.RegisterMove();
@@ -107,15 +106,13 @@ namespace TicTacToe.UI
             try
             {
                 int currentLevel = _tournamentManager.CurrentRound;
-                _botStrategy = StrategyFactory.CreateStrategy(currentLevel);
-                var move = _botStrategy.GetNextMove(_gameEngine.GetBoard(), _player2.Symbol);
-                string btnName = $"btn{move.row}{move.col}";
-                Control[] controls = this.Controls.Find(btnName, true);
+_botStrategy = StrategyFactory.CreateStrategy(currentLevel);
+var move = _botStrategy.GetNextMove(_gameEngine.GetBoard(), _player2.Symbol);
 
-                if (controls.Length > 0 && controls[0] is Button botButton)
-                {
-                    HandleMove(botButton);
-                }
+if (_boardButtons.TryGetValue((move.row, move.col), out var botButton))
+{
+    HandleMove(botButton);
+}
             }
             catch (Exception ex) { _logger.LogError("Бот помилився", ex); }
         }
@@ -176,32 +173,36 @@ namespace TicTacToe.UI
             }
         }
 
-        private void GenerateDynamicBoard(int size)
+      private void GenerateDynamicBoard(int size)
+{
+    var oldButtons = this.Controls.OfType<Button>().Where(b => b.Name.StartsWith("btn")).ToList();
+    foreach (var btn in oldButtons) this.Controls.Remove(btn);
+    
+    _boardButtons.Clear(); // Очищаємо старі кнопки з реєстру
+
+    int btnSize = 60;
+    int startX = (this.Width - (size * btnSize)) / 2;
+    int startY = 100;
+
+    for (int i = 0; i < size; i++)
+    {
+        for (int j = 0; j < size; j++)
         {
-            var oldButtons = this.Controls.OfType<Button>().Where(b => b.Name.StartsWith("btn")).ToList();
-            foreach (var btn in oldButtons) this.Controls.Remove(btn);
-
-            int btnSize = 60;
-            int startX = (this.Width - (size * btnSize)) / 2;
-            int startY = 100;
-
-            for (int i = 0; i < size; i++)
+            Button b = new Button
             {
-                for (int j = 0; j < size; j++)
-                {
-                    Button b = new Button
-                    {
-                        Name = $"btn{i}{j}",
-                        Size = new Size(btnSize, btnSize),
-                        Location = new Point(startX + j * btnSize, startY + i * btnSize),
-                        Font = new Font("Arial", 14, FontStyle.Bold),
-                        BackColor = Color.White
-                    };
-                    b.Click += OnButtonClick;
-                    this.Controls.Add(b);
-                }
-            }
+                Name = $"btn{i}{j}",
+                Size = new Size(btnSize, btnSize),
+                Location = new Point(startX + j * btnSize, startY + i * btnSize),
+                Font = new Font("Arial", 14, FontStyle.Bold),
+                BackColor = Color.White,
+                Tag = (i, j) // Прив'язуємо координати до Tag
+            };
+            b.Click += OnButtonClick;
+            this.Controls.Add(b);
+            _boardButtons.Add((i, j), b); // Додаємо кнопку в наш словник
         }
+    }
+}
 
         private void PrepareNextRound()
         {
@@ -246,19 +247,20 @@ namespace TicTacToe.UI
         }
 
         private void ApplyUndoToUI(MoveSnapshot snapshot)
-        {
-            string btnName = $"btn{snapshot.Row}{snapshot.Col}";
-            var btn = (Button)this.Controls.Find(btnName, true).FirstOrDefault();
-            if (btn != null) { btn.Text = ""; btn.Enabled = true; btn.BackColor = Color.White; }
-        }
+{
+    if (_boardButtons.TryGetValue((snapshot.Row, snapshot.Col), out var btn))
+    {
+        btn.Text = ""; btn.Enabled = true; btn.BackColor = Color.White;
+    }
+}
 
-        private void ApplyRedoToUI(MoveSnapshot snapshot)
-        {
-            string btnName = $"btn{snapshot.Row}{snapshot.Col}";
-            var btn = (Button)this.Controls.Find(btnName, true).FirstOrDefault();
-            if (btn != null) { btn.Text = snapshot.Symbol.ToString(); btn.Enabled = false; }
-        }
-
+private void ApplyRedoToUI(MoveSnapshot snapshot)
+{
+    if (_boardButtons.TryGetValue((snapshot.Row, snapshot.Col), out var btn))
+    {
+        btn.Text = snapshot.Symbol.ToString(); btn.Enabled = false;
+    }
+}
         private void RefreshUndoRedoButtons()
         {
             if (btnUndo != null) btnUndo.Enabled = _history.CanUndo;
@@ -266,20 +268,21 @@ namespace TicTacToe.UI
         }
 
         private char[,] GetCurrentBoardFromUI()
+{
+    int size = _tournamentManager.GetCurrentBoardSize();
+    char[,] board = new char[size, size];
+    for (int i = 0; i < size; i++)
+    {
+        for (int j = 0; j < size; j++)
         {
-            int size = _tournamentManager.GetCurrentBoardSize();
-            char[,] board = new char[size, size];
-            for (int i = 0; i < size; i++)
+            if (_boardButtons.TryGetValue((i, j), out var btn))
             {
-                for (int j = 0; j < size; j++)
-                {
-                    string btnName = $"btn{i}{j}";
-                    var btn = (Button)this.Controls.Find(btnName, true).FirstOrDefault();
-                    board[i, j] = string.IsNullOrEmpty(btn?.Text) ? '\0' : btn.Text[0];
-                }
+                board[i, j] = string.IsNullOrEmpty(btn.Text) ? '\0' : btn.Text[0];
             }
-            return board;
         }
+    }
+    return board;
+}
 
         private void UpdateStatusLabel()
         {
